@@ -64,9 +64,9 @@
 
 + (NSInteger)scoreForText:(NSString *)text matched:(NSString **)matched {
     NSString *lower = text.lowercaseString ?: @"";
-    NSInteger score = 0;
-    NSString *best = nil;
-    NSInteger bestWeight = 0;
+    __block NSInteger score = 0;
+    __block NSString *best = nil;
+    __block NSInteger bestWeight = 0;
     [[self keywordWeights] enumerateKeysAndObjectsUsingBlock:^(NSString *k, NSNumber *weight, BOOL *stop) {
         if ([lower containsString:k]) {
             NSInteger w = weight.integerValue;
