@@ -5,45 +5,85 @@ on:
   push:
     branches:
       - main
-      - master
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build JBToolbox
+    runs-on: macos-15
+
+    env:
+      THEOS: ${{ github.workspace }}/theos
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Setup Theos
-        uses: Randomblock1/theos-action@v1
-        with:
-          theos-dir: theos
-          theos-src: https://github.com/theos/theos
-          theos-sdks: https://github.com/theos/sdks
-          theos-sdks-branch: master
-
-      - name: Show environment
+      - name: Show Xcode
         run: |
-          echo "THEOS=$THEOS"
-          echo "Available SDKs:"
-          ls -la "$THEOS/sdks" || true
-          echo "Toolchain:"
-          ls -la "$THEOS/toolchain/linux/iphone/bin" | head || true
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphoneos --show-sdk-path
 
-      - name: Build Rootless Package
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install ldid || true
+
+      - name: Install Theos
+        run: |
+          rm -rf "$THEOS"
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+
+          echo "THEOS = $THEOS"
+          test -f "$THEOS/makefiles/common.mk"
+
+      - name: Configure project
+        run: |
+          echo "===== OLD MAKEFILE ====="
+          cat Makefile
+
+          sed -i '' \
+            's/^TARGET = .*/TARGET = iphone:clang:latest:15.0/' \
+            Makefile
+
+          echo "===== NEW MAKEFILE ====="
+          cat Makefile
+
+      - name: Verify files
+        run: |
+          echo "===== ROOT ====="
+          ls -la
+
+          echo "===== SOURCES ====="
+          find Sources -type f -maxdepth 2 -print
+
+          echo "===== RESOURCES ====="
+          find Resources -type f -maxdepth 2 -print || true
+
+          echo "===== CONTROL ====="
+          cat control
+
+      - name: Build package
         run: |
           rm -rf .theos packages
+
+          make clean
           make package FINALPACKAGE=1 messages=yes
 
-      - name: Show generated packages
-        if: success()
+      - name: Verify DEB
         run: |
-          echo "Generated DEBs:"
+          echo "===== GENERATED DEB ====="
+
           find packages -type f -name "*.deb" -print
 
+          COUNT=$(find packages -type f -name "*.deb" | wc -l | tr -d ' ')
+
+          if [ "$COUNT" -lt 1 ]; then
+            echo "ERROR: No DEB generated"
+            exit 1
+          fi
+
       - name: Upload DEB
-        if: success()
         uses: actions/upload-artifact@v7
         with:
           name: JBToolbox-rootless-DEB
