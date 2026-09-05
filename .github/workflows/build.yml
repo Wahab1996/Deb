@@ -3,39 +3,49 @@ name: Build Rootless DEB
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Install prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bash curl git make xz-utils clang lld
-
-      - name: Install Theos
-        run: |
-          export THEOS="$HOME/theos"
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
-          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
-
-      - name: Install patched iOS 15.6 SDK
-        run: |
-          git clone --depth 1 https://github.com/theos/sdks.git /tmp/theos-sdks
-          mkdir -p "$THEOS/sdks"
-          cp -R /tmp/theos-sdks/iPhoneOS15.6.sdk "$THEOS/sdks/"
-
-      - name: Build package
-        run: |
-          make clean
-          make package FINALPACKAGE=1
-
-      - name: Upload DEB artifact
-        uses: actions/upload-artifact@v4
+      - name: Setup Theos
+        uses: Randomblock1/theos-action@v1
         with:
-          name: JBToolbox-rootless-deb
+          theos-dir: theos
+          theos-src: https://github.com/theos/theos
+          theos-sdks: https://github.com/theos/sdks
+          theos-sdks-branch: master
+
+      - name: Show environment
+        run: |
+          echo "THEOS=$THEOS"
+          echo "Available SDKs:"
+          ls -la "$THEOS/sdks" || true
+          echo "Toolchain:"
+          ls -la "$THEOS/toolchain/linux/iphone/bin" | head || true
+
+      - name: Build Rootless Package
+        run: |
+          rm -rf .theos packages
+          make package FINALPACKAGE=1 messages=yes
+
+      - name: Show generated packages
+        if: success()
+        run: |
+          echo "Generated DEBs:"
+          find packages -type f -name "*.deb" -print
+
+      - name: Upload DEB
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: JBToolbox-rootless-DEB
           path: packages/*.deb
+          if-no-files-found: error
