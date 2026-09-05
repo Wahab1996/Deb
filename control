@@ -1,0 +1,9 @@
+Package: com.wahab.purchasestateinspector
+Name: Purchase State Inspector
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Description: Read-only app data and state inspector for authorized testing on jailbroken iOS devices.
+Maintainer: Wahab
+Author: Wahab
+Section: Utilities
+Depends: firmware (>= 15.0)
