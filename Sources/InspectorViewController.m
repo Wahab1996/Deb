@@ -31,14 +31,14 @@
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return 4;
-    if (section == 1) return 4;
+    if (section == 1) return 5;
     return self.findings.count;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"Target";
     if (section == 1) return @"Read-only inspector";
-    return [NSString stringWithFormat:@"Findings (%lu)", (unsigned long)self.findings.count];
+    return [NSString stringWithFormat:@"Purchase Candidates (%lu)", (unsigned long)self.findings.count];
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -61,12 +61,13 @@
         cell.detailTextLabel.text = values[indexPath.row];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (indexPath.section == 1) {
-        NSArray *labels = @[@"Analyze Local State", @"StoreKit / Product Clues", @"Snapshot Before", @"Compare After"];
+        NSArray *labels = @[@"Analyze Purchase State", @"StoreKit / Product Clues", @"Snapshot Before", @"Compare After — Purchase Only", @"Show Raw Changes"];
         NSArray *details = @[
-            @"Find exact plist/JSON/binary-plist keys, SQLite/CoreData fields and purchase-related file paths",
-            @"Read-only scan for receipt paths, StoreKit strings and possible product identifiers in app/data files",
-            @"Capture full data-container manifest + hashes + structured values + readable database cells",
-            @"Show added, removed and changed local values since Snapshot Before"
+            @"Strict scan: only high-confidence purchase/entitlement plist, JSON and SQLite candidates",
+            @"Receipt/StoreKit/product-ID clues, ranked and limited instead of hundreds of generic strings",
+            @"Capture the full local state for a before/after comparison",
+            @"Show the strongest purchase-related changes only (maximum 20)",
+            @"Optional unfiltered diff for debugging; may contain many unrelated app changes"
         ];
         cell.textLabel.text = labels[indexPath.row];
         cell.detailTextLabel.text = details[indexPath.row];
@@ -88,7 +89,8 @@
         if (indexPath.row == 0) [self runLocalScan];
         else if (indexPath.row == 1) [self runStoreKitScan];
         else if (indexPath.row == 2) [self saveSnapshot];
-        else [self compareSnapshot];
+        else if (indexPath.row == 3) [self compareSnapshot];
+        else [self compareSnapshotRaw];
     } else if (indexPath.section == 2) {
         [self.navigationController pushViewController:[[FindingDetailViewController alloc] initWithFinding:self.findings[indexPath.row]] animated:YES];
     }
@@ -116,7 +118,7 @@
 - (void)runLocalScan {
     __block NSArray *results = nil;
     [self runBusy:^{ results = [StateScanner scanApp:self.app]; } completion:^{
-        [self setResults:results emptyTitle:@"Scan complete" emptyMessage:@"No purchase-related local-state candidates were detected. This does not mean the app has no purchases; the state may be server/receipt-backed or stored in an unsupported binary format."];
+        [self setResults:results emptyTitle:@"No strong purchase candidates" emptyMessage:@"No high-confidence purchase/entitlement local-state candidates were detected. Generic values are intentionally hidden. The state may be receipt/server-backed or stored in an unsupported format."];
     }];
 }
 
@@ -147,7 +149,20 @@
     __block NSDictionary *after = nil;
     [self runBusy:^{ after = [StateScanner snapshotApp:self.app]; } completion:^{
         NSArray *diff = [StateScanner diffFrom:before to:after ?: @{}];
-        [self setResults:diff emptyTitle:@"No local differences" emptyMessage:@"No file hash, supported structured value, or readable SQLite/CoreData cell changed since the snapshot. The state may be external/server/receipt-backed, or stored in a format this build does not decode."];
+        [self setResults:diff emptyTitle:@"No purchase-related changes" emptyMessage:@"Local changes may exist, but none met the purchase-relevance threshold. Generic cache/session/analytics changes are intentionally hidden. Use Show Raw Changes only if you need the complete diff."];
+    }];
+}
+
+- (void)compareSnapshotRaw {
+    NSDictionary *before = [SnapshotStore loadSnapshotForBundleID:self.app.bundleID];
+    if (!before) {
+        [self show:@"No snapshot" message:@"Run Snapshot Before first, perform the authorized test action in the target app, then return here."];
+        return;
+    }
+    __block NSDictionary *after = nil;
+    [self runBusy:^{ after = [StateScanner snapshotApp:self.app]; } completion:^{
+        NSArray *diff = [StateScanner rawDiffFrom:before to:after ?: @{}];
+        [self setResults:diff emptyTitle:@"No local differences" emptyMessage:@"No supported local state changed since the snapshot."];
     }];
 }
 

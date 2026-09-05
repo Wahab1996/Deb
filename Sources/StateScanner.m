@@ -8,32 +8,86 @@
 
 #pragma mark - Heuristics
 
-+ (NSArray<NSString *> *)keywords {
-    return @[@"premium", @"pro", @"purchase", @"purchased", @"subscription", @"subscribed",
-             @"entitlement", @"license", @"licensed", @"paid", @"unlock", @"unlocked", @"vip",
-             @"membership", @"trial", @"receipt", @"productid", @"product_id", @"storekit",
-             @"ispro", @"is_pro", @"ispremium", @"is_premium", @"haspremium", @"activeplan",
-             @"removeads", @"remove_ads", @"noads", @"no_ads", @"iap", @"inapp", @"in_app",
-             @"billing", @"owned", @"ownership", @"accesslevel", @"access_level", @"paywall"];
++ (NSDictionary<NSString *, NSNumber *> *)keywordWeights {
+    // Strong signals are intentionally weighted much higher than generic words.
+    // This keeps the default list small and purchase-focused.
+    return @{
+        @"storekit": @18,
+        @"transaction": @18,
+        @"receipt": @18,
+        @"entitlement": @18,
+        @"product_id": @17,
+        @"productid": @17,
+        @"subscription": @16,
+        @"subscribed": @16,
+        @"purchase": @15,
+        @"purchased": @17,
+        @"ownership": @15,
+        @"owned": @13,
+        @"premium": @14,
+        @"is_premium": @18,
+        @"ispremium": @18,
+        @"haspremium": @18,
+        @"unlock": @13,
+        @"unlocked": @16,
+        @"license": @13,
+        @"licensed": @15,
+        @"membership": @13,
+        @"activeplan": @16,
+        @"access_level": @14,
+        @"accesslevel": @14,
+        @"paywall": @13,
+        @"billing": @12,
+        @"iap": @12,
+        @"in_app": @12,
+        @"inapp": @12,
+        @"remove_ads": @15,
+        @"removeads": @15,
+        @"no_ads": @15,
+        @"noads": @15,
+        @"vip": @10,
+        @"paid": @10,
+        @"is_pro": @14,
+        @"ispro": @14
+    };
+}
+
++ (NSArray<NSString *> *)noiseTokens {
+    return @[
+        @"analytics", @"telemetry", @"crash", @"log", @"cache", @"tmp", @"temp",
+        @"session", @"heartbeat", @"lastopened", @"last_opened", @"lastlaunch", @"last_launch",
+        @"timestamp", @"modifiedat", @"modified_at", @"createdat", @"created_at",
+        @"impression", @"diagnostic", @"metric", @"metrics", @"performance", @"usage",
+        @"firebase", @"appsflyer", @"adjust", @"branch", @"facebook", @"sentry"
+    ];
 }
 
 + (NSInteger)scoreForText:(NSString *)text matched:(NSString **)matched {
     NSString *lower = text.lowercaseString ?: @"";
     NSInteger score = 0;
-    NSString *first = nil;
-    for (NSString *k in [self keywords]) {
+    NSString *best = nil;
+    NSInteger bestWeight = 0;
+    [[self keywordWeights] enumerateKeysAndObjectsUsingBlock:^(NSString *k, NSNumber *weight, BOOL *stop) {
         if ([lower containsString:k]) {
-            if (!first) first = k;
-            if ([k isEqualToString:@"premium"] || [k isEqualToString:@"purchase"] ||
-                [k isEqualToString:@"purchased"] || [k isEqualToString:@"subscription"] ||
-                [k isEqualToString:@"entitlement"] || [k isEqualToString:@"receipt"] ||
-                [k isEqualToString:@"productid"] || [k isEqualToString:@"product_id"] ||
-                [k isEqualToString:@"storekit"]) score += 4;
-            else score += 2;
+            NSInteger w = weight.integerValue;
+            score += w;
+            if (w > bestWeight) {
+                bestWeight = w;
+                best = k;
+            }
         }
-    }
-    if (matched) *matched = first;
+    }];
+    if (matched) *matched = best;
     return score;
+}
+
++ (NSInteger)noisePenaltyForText:(NSString *)text {
+    NSString *lower = text.lowercaseString ?: @"";
+    NSInteger penalty = 0;
+    for (NSString *token in [self noiseTokens]) {
+        if ([lower containsString:token]) penalty += 8;
+    }
+    return penalty;
 }
 
 + (BOOL)isDisabledLikeValue:(NSString *)value {
@@ -41,7 +95,17 @@
     return [v isEqualToString:@"0"] || [v isEqualToString:@"false"] ||
            [v isEqualToString:@"no"] || [v isEqualToString:@"inactive"] ||
            [v isEqualToString:@"locked"] || [v isEqualToString:@"disabled"] ||
-           [v isEqualToString:@"none"] || [v isEqualToString:@"free"];
+           [v isEqualToString:@"none"] || [v isEqualToString:@"free"] ||
+           [v isEqualToString:@"not_purchased"] || [v isEqualToString:@"not purchased"];
+}
+
++ (BOOL)isEnabledLikeValue:(NSString *)value {
+    NSString *v = value.lowercaseString ?: @"";
+    return [v isEqualToString:@"1"] || [v isEqualToString:@"true"] ||
+           [v isEqualToString:@"yes"] || [v isEqualToString:@"active"] ||
+           [v isEqualToString:@"unlocked"] || [v isEqualToString:@"enabled"] ||
+           [v isEqualToString:@"premium"] || [v isEqualToString:@"pro"] ||
+           [v isEqualToString:@"purchased"] || [v isEqualToString:@"owned"];
 }
 
 + (NSString *)stringify:(id)value {
@@ -65,8 +129,56 @@
     f.keyPath = key ?: @"";
     f.value = value ?: @"";
     f.reason = reason ?: @"";
-    f.score = score;
+    f.score = MAX(0, score);
     return f;
+}
+
++ (NSInteger)purchaseConfidenceForFile:(NSString *)file
+                                   key:(NSString *)key
+                                 value:(NSString *)value
+                                  kind:(NSString *)kind
+                               changed:(BOOL)changed {
+    NSInteger keyScore = [self scoreForText:key matched:NULL];
+    NSInteger fileScore = [self scoreForText:file.lastPathComponent matched:NULL];
+    NSInteger valueScore = [self scoreForText:value matched:NULL];
+
+    // A matching key/column is far more useful than a random matching value.
+    NSInteger score = keyScore * 2 + MIN(fileScore, 20) + MIN(valueScore, 18);
+
+    if ([kind isEqualToString:@"SQLITE"] || [kind isEqualToString:@"VALUE"]) score += 6;
+    if (changed) score += 8;
+
+    if (([self isDisabledLikeValue:value] || [self isEnabledLikeValue:value]) && keyScore >= 10) score += 8;
+
+    NSString *context = [NSString stringWithFormat:@"%@ %@", file ?: @"", key ?: @""];
+    NSInteger penalty = [self noisePenaltyForText:context];
+    // Strong StoreKit/receipt evidence should not be buried just because a path also contains a noisy token.
+    if (keyScore < 18 && fileScore < 18) score -= penalty;
+
+    return MAX(0, score);
+}
+
++ (NSArray<InspectionFinding *> *)rankAndLimit:(NSArray<InspectionFinding *> *)input
+                                      minimum:(NSInteger)minimum
+                                         limit:(NSUInteger)limit {
+    NSMutableDictionary<NSString *, InspectionFinding *> *best = [NSMutableDictionary dictionary];
+    for (InspectionFinding *f in input) {
+        if (f.score < minimum) continue;
+        NSString *dedupe = [NSString stringWithFormat:@"%@|%@|%@", f.filePath ?: @"", f.keyPath ?: @"", f.category ?: @""];
+        InspectionFinding *old = best[dedupe];
+        if (!old || f.score > old.score) best[dedupe] = f;
+    }
+    NSMutableArray<InspectionFinding *> *out = [NSMutableArray arrayWithArray:best.allValues];
+    [out sortUsingComparator:^NSComparisonResult(InspectionFinding *a, InspectionFinding *b) {
+        if (a.score != b.score) return a.score > b.score ? NSOrderedAscending : NSOrderedDescending;
+        NSComparisonResult f = [a.filePath compare:b.filePath];
+        if (f != NSOrderedSame) return f;
+        return [a.keyPath compare:b.keyPath];
+    }];
+    if (limit > 0 && out.count > limit) {
+        return [out subarrayWithRange:NSMakeRange(0, limit)];
+    }
+    return out;
 }
 
 #pragma mark - File discovery / hashing
@@ -196,13 +308,14 @@
 
     if (!findings) return;
     NSString *matched = nil;
-    NSInteger keyScore = [self scoreForText:prefix matched:&matched];
-    NSInteger valueScore = [self scoreForText:valueString matched:NULL];
-    NSInteger score = keyScore * 2 + valueScore;
-    if (score > 0) {
+    NSInteger score = [self purchaseConfidenceForFile:file key:prefix value:valueString kind:@"VALUE" changed:NO];
+    if (score >= 28) {
+        [self scoreForText:prefix matched:&matched];
         BOOL disabled = [self isDisabledLikeValue:valueString];
-        NSString *reason = matched ? [NSString stringWithFormat:@"Purchase-state-like key matched '%@'%@", matched, disabled ? @" and its current value looks disabled/locked" : @""] : @"Purchase-state-like value";
-        [findings addObject:[self finding:@"Structured state" file:file key:prefix value:valueString reason:reason score:score + (disabled ? 4 : 0)]];
+        BOOL enabled = [self isEnabledLikeValue:valueString];
+        NSString *stateHint = disabled ? @"; value currently looks disabled/locked" : (enabled ? @"; value currently looks enabled/owned" : @"");
+        NSString *reason = matched ? [NSString stringWithFormat:@"High-signal purchase-state key matched '%@'%@", matched, stateHint] : @"Purchase-state candidate supported by file/key/value context";
+        [findings addObject:[self finding:@"Purchase state candidate" file:file key:prefix value:valueString reason:reason score:score]];
     }
 }
 
@@ -262,14 +375,16 @@
                     if (all) all[[NSString stringWithFormat:@"SQLITE|%@|%@", url.path, keyPath]] = value ?: @"";
 
                     if (findings) {
+                        NSString *name = [NSString stringWithFormat:@"%@.%@", table, col];
                         NSString *matched = nil;
-                        NSInteger nameScore = [self scoreForText:[NSString stringWithFormat:@"%@.%@", table, col] matched:&matched];
-                        NSInteger valueScore = [self scoreForText:value matched:NULL];
-                        NSInteger score = nameScore * 2 + valueScore;
-                        if (score > 0) {
+                        NSInteger score = [self purchaseConfidenceForFile:url.path key:name value:value kind:@"SQLITE" changed:NO];
+                        if (score >= 28) {
+                            [self scoreForText:name matched:&matched];
                             BOOL disabled = [self isDisabledLikeValue:value];
-                            NSString *reason = matched ? [NSString stringWithFormat:@"SQLite table/column matched '%@'%@", matched, disabled ? @"; current value looks disabled/locked" : @""] : @"Purchase-state-like SQLite value";
-                            [findings addObject:[self finding:@"SQLite/CoreData" file:url.path key:keyPath value:value reason:reason score:score + (disabled ? 4 : 0)]];
+                            BOOL enabled = [self isEnabledLikeValue:value];
+                            NSString *stateHint = disabled ? @"; value currently looks disabled/locked" : (enabled ? @"; value currently looks enabled/owned" : @"");
+                            NSString *reason = matched ? [NSString stringWithFormat:@"High-signal SQLite table/column matched '%@'%@", matched, stateHint] : @"Purchase-state candidate supported by database context";
+                            [findings addObject:[self finding:@"SQLite purchase candidate" file:url.path key:keyPath value:value reason:reason score:score]];
                         }
                     }
                 }
@@ -363,25 +478,22 @@
                                [s.lowercaseString containsString:@"subscription"] ||
                                [s.lowercaseString containsString:@"iap"] ||
                                [s.lowercaseString containsString:@"pro"] ||
-                               [s.lowercaseString containsString:@"coin"] ||
-                               [s.lowercaseString containsString:@"remove"] ||
-                               [s.lowercaseString containsString:@"ad"]);
+                               [s.lowercaseString containsString:@"removeads"] ||
+                               [s.lowercaseString containsString:@"remove_ads"] ||
+                               [s.lowercaseString containsString:@"noads"] ||
+                               [s.lowercaseString containsString:@"no_ads"]);
             if (score == 0 && !productish) continue;
             NSString *dedupe = [NSString stringWithFormat:@"%@|%@", url.path, s];
             if ([seen containsObject:dedupe]) continue;
             [seen addObject:dedupe];
             NSString *reason = productish ? @"Possible StoreKit product identifier / purchase-related constant" : [NSString stringWithFormat:@"Purchase/StoreKit-related string matched '%@'", matched ?: @"keyword"];
             [findings addObject:[self finding:productish ? @"Possible Product ID" : @"StoreKit string" file:url.path key:@"<printable string>" value:s reason:reason score:(productish ? 10 : 5 + score)]];
-            if (findings.count >= 500) break;
+            if (findings.count >= 80) break;
         }
-        if (findings.count >= 500) break;
+        if (findings.count >= 80) break;
     }
 
-    [findings sortUsingComparator:^NSComparisonResult(InspectionFinding *a, InspectionFinding *b) {
-        if (a.score != b.score) return a.score > b.score ? NSOrderedAscending : NSOrderedDescending;
-        return [a.filePath compare:b.filePath];
-    }];
-    return findings;
+    return [self rankAndLimit:findings minimum:12 limit:40];
 }
 
 #pragma mark - Public scan
@@ -394,20 +506,18 @@
             if (obj) [self flattenObject:obj prefix:@"" file:url.path all:nil findings:findings];
             if ([self looksLikeSQLite:url]) [self scanSQLite:url all:nil findings:findings fullRows:NO];
 
-            NSString *lowerPath = url.path.lowercaseString;
             NSString *matched = nil;
-            NSInteger pathScore = [self scoreForText:lowerPath matched:&matched];
-            if (pathScore > 0) {
-                [findings addObject:[self finding:@"Purchase-related file" file:url.path key:@"<file>" value:[self fileSignature:url] reason:[NSString stringWithFormat:@"File path/name matched '%@'", matched ?: @"purchase keyword"] score:pathScore + 2]];
+            NSInteger pathScore = [self scoreForText:url.lastPathComponent matched:&matched];
+            if (pathScore >= 15) {
+                NSInteger score = pathScore - [self noisePenaltyForText:url.path];
+                if (score >= 15) {
+                    [findings addObject:[self finding:@"Purchase-related file" file:url.path key:@"<file>" value:[self fileSignature:url] reason:[NSString stringWithFormat:@"Strong purchase-related filename/path matched '%@'", matched ?: @"keyword"] score:score]];
+                }
             }
-            if (findings.count >= 1200) break;
+            if (findings.count >= 300) break;
         }
     }
-    [findings sortUsingComparator:^NSComparisonResult(InspectionFinding *a, InspectionFinding *b) {
-        if (a.score != b.score) return a.score > b.score ? NSOrderedAscending : NSOrderedDescending;
-        return [a.filePath compare:b.filePath];
-    }];
-    return findings;
+    return [self rankAndLimit:findings minimum:28 limit:25];
 }
 
 #pragma mark - Full snapshot
@@ -433,8 +543,8 @@
     return all;
 }
 
-+ (NSArray<InspectionFinding *> *)diffFrom:(NSDictionary<NSString *, NSString *> *)before
-                                        to:(NSDictionary<NSString *, NSString *> *)after {
++ (NSArray<InspectionFinding *> *)rawDiffFrom:(NSDictionary<NSString *, NSString *> *)before
+                                           to:(NSDictionary<NSString *, NSString *> *)after {
     NSMutableArray<InspectionFinding *> *changes = [NSMutableArray array];
     NSMutableSet<NSString *> *keys = [NSMutableSet setWithArray:before.allKeys];
     [keys addObjectsFromArray:after.allKeys];
@@ -449,37 +559,79 @@
         NSString *kind = parts.count ? parts[0] : @"VALUE";
         NSString *file = parts.count > 1 ? parts[1] : @"";
         NSString *keyPath = parts.count > 2 ? [[parts subarrayWithRange:NSMakeRange(2, parts.count - 2)] componentsJoinedByString:@"|"] : @"<file>";
+        if ([kind isEqualToString:@"META"]) continue;
 
         NSString *category = @"State changed";
-        NSInteger score = 15;
-        if ([kind isEqualToString:@"FILE"]) { category = @"File changed"; score = 8; }
-        else if ([kind isEqualToString:@"SQLITE"]) { category = @"SQLite/CoreData changed"; score = 18; }
-        else if ([kind isEqualToString:@"VALUE"]) { category = @"Structured value changed"; score = 20; }
-        else if ([kind isEqualToString:@"META"]) continue;
+        NSInteger base = 4;
+        if ([kind isEqualToString:@"FILE"]) { category = @"File changed"; base = 3; }
+        else if ([kind isEqualToString:@"SQLITE"]) { category = @"SQLite/CoreData changed"; base = 6; }
+        else if ([kind isEqualToString:@"VALUE"]) { category = @"Structured value changed"; base = 7; }
 
-        NSInteger clue = [self scoreForText:[NSString stringWithFormat:@"%@ %@ %@", file, keyPath, now ?: old ?: @""] matched:NULL];
-        score += clue * 2;
         NSString *value = nil;
         NSString *reason = nil;
         if (!old) {
             value = [NSString stringWithFormat:@"ADDED\n%@", now ?: @"<null>"];
-            reason = @"This file/value appeared after the snapshot.";
+            reason = @"Raw diff: this file/value appeared after the snapshot.";
         } else if (!now) {
             value = [NSString stringWithFormat:@"REMOVED\n%@", old];
-            reason = @"This file/value disappeared after the snapshot.";
+            reason = @"Raw diff: this file/value disappeared after the snapshot.";
         } else {
             value = [NSString stringWithFormat:@"BEFORE\n%@\n\nAFTER\n%@", old, now];
-            reason = @"Exact local state difference detected between Snapshot Before and Compare After.";
+            reason = @"Raw diff: exact local state difference.";
         }
-        [changes addObject:[self finding:category file:file key:keyPath value:value reason:reason score:score]];
+        [changes addObject:[self finding:category file:file key:keyPath value:value reason:reason score:base]];
         if (changes.count >= 3000) break;
     }
 
     [changes sortUsingComparator:^NSComparisonResult(InspectionFinding *a, InspectionFinding *b) {
-        if (a.score != b.score) return a.score > b.score ? NSOrderedAscending : NSOrderedDescending;
-        return [a.filePath compare:b.filePath];
+        NSComparisonResult f = [a.filePath compare:b.filePath];
+        if (f != NSOrderedSame) return f;
+        return [a.keyPath compare:b.keyPath];
     }];
     return changes;
+}
+
++ (NSArray<InspectionFinding *> *)diffFrom:(NSDictionary<NSString *, NSString *> *)before
+                                        to:(NSDictionary<NSString *, NSString *> *)after {
+    NSArray<InspectionFinding *> *raw = [self rawDiffFrom:before to:after];
+    NSMutableArray<InspectionFinding *> *candidates = [NSMutableArray array];
+
+    for (InspectionFinding *r in raw) {
+        BOOL isFileOnly = [r.category isEqualToString:@"File changed"];
+        NSString *kind = [r.category containsString:@"SQLite"] ? @"SQLITE" : (isFileOnly ? @"FILE" : @"VALUE");
+        NSInteger score = [self purchaseConfidenceForFile:r.filePath
+                                                       key:r.keyPath
+                                                     value:r.value
+                                                      kind:kind
+                                                   changed:YES];
+
+        // File-level hash churn is extremely noisy. Only surface it if the file name/path itself
+        // contains a strong purchase signal. Structured/DB changes require a high confidence score.
+        if (isFileOnly) {
+            NSInteger fileSignal = [self scoreForText:r.filePath.lastPathComponent matched:NULL];
+            if (fileSignal < 15 || score < 28) continue;
+        } else if (score < 34) {
+            continue;
+        }
+
+        NSString *matched = nil;
+        [self scoreForText:[NSString stringWithFormat:@"%@ %@", r.filePath.lastPathComponent ?: @"", r.keyPath ?: @""] matched:&matched];
+        NSString *confidence = score >= 70 ? @"HIGH" : (score >= 48 ? @"MEDIUM-HIGH" : @"MEDIUM");
+        NSString *reason = [NSString stringWithFormat:@"%@ purchase relevance (%@). %@",
+                            confidence,
+                            matched ? [NSString stringWithFormat:@"matched '%@'", matched] : @"context correlation",
+                            r.reason ?: @""];
+        InspectionFinding *f = [self finding:isFileOnly ? @"Purchase-related file change" : @"Purchase-state change candidate"
+                                              file:r.filePath
+                                               key:r.keyPath
+                                             value:r.value
+                                            reason:reason
+                                             score:score];
+        [candidates addObject:f];
+    }
+
+    // Default Compare After is intentionally concise: strongest 20 candidates only.
+    return [self rankAndLimit:candidates minimum:34 limit:20];
 }
 
 @end

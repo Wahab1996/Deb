@@ -22,7 +22,8 @@
     text.selectable = YES;
     text.font = [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightRegular];
     text.textContainerInset = UIEdgeInsetsMake(20, 16, 20, 16);
-    text.text = [NSString stringWithFormat:@"CATEGORY\n%@\n\nFILE\n%@\n\nKEY / LOCATION\n%@\n\nVALUE\n%@\n\nWHY FLAGGED\n%@\n\nSCORE\n%ld", self.finding.category, self.finding.filePath, self.finding.keyPath, self.finding.value, self.finding.reason, (long)self.finding.score];
+    NSString *confidence = self.finding.score >= 70 ? @"HIGH" : (self.finding.score >= 48 ? @"MEDIUM-HIGH" : (self.finding.score >= 34 ? @"MEDIUM" : @"RAW / LOW"));
+    text.text = [NSString stringWithFormat:@"CATEGORY\n%@\n\nCONFIDENCE\n%@\n\nFILE\n%@\n\nKEY / LOCATION\n%@\n\nVALUE\n%@\n\nWHY FLAGGED\n%@\n\nSCORE\n%ld", self.finding.category, confidence, self.finding.filePath, self.finding.keyPath, self.finding.value, self.finding.reason, (long)self.finding.score];
     [self.view addSubview:text];
     [NSLayoutConstraint activateConstraints:@[
         [text.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],

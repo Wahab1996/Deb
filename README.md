@@ -23,3 +23,11 @@ The inspector does not write to the selected app, alter receipts, forge transact
 The included GitHub Actions workflow builds on macOS with Theos and uploads the rootless `.deb` artifact.
 
 Path: `.github/workflows/build.yml`
+
+## 0.2.1 filtering patch (same project/package)
+- Default Analyze/Compare views now show only high-confidence purchase/entitlement candidates.
+- Compare After is capped at the strongest 20 candidates.
+- StoreKit/Product clues are ranked and capped at 40.
+- Cache/session/analytics/telemetry churn is penalized and hidden from default results.
+- Full unfiltered diff remains available only through **Show Raw Changes**.
+- Package ID remains `com.wahab.purchasestateinspector`.
