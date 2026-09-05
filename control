@@ -1,0 +1,9 @@
+Package: com.wahab.jbtoolbox
+Name: JB Toolbox
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Description: Modular rootless jailbreak toolbox for iOS 15+.
+Maintainer: Abdulwahab
+Author: Abdulwahab
+Section: Utilities
+Depends: firmware (>= 15.0)
